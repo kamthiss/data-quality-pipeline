@@ -4,34 +4,17 @@ from zoneinfo import ZoneInfo
 
 import httpx
 import pandas as pd
-import psycopg
 import pytest
 from fastapi.testclient import TestClient
-from psycopg.conninfo import make_conninfo
 
-from dqpipe.config import DB_URL, TZ
-from dqpipe.db import connect, reset
+from dqpipe import run as run_module
+from dqpipe.config import TZ
+from dqpipe.freshness import freshness
 from dqpipe.run import run
 from dqpipe.source.api import app
 from dqpipe.source.generator import OUT
 
 DAY = date(2026, 8, 3)
-
-
-@pytest.fixture(scope="module")
-def admin():
-    with psycopg.connect(DB_URL, autocommit=True) as c:
-        c.execute("drop database if exists dq_test with (force)")
-        c.execute("create database dq_test")
-        yield c
-        c.execute("drop database dq_test with (force)")
-
-
-@pytest.fixture
-def conn(admin):
-    with connect(make_conninfo(DB_URL, dbname="dq_test")) as c:
-        reset(c)
-        yield c
 
 
 @pytest.fixture(scope="module")
@@ -134,26 +117,93 @@ def test_refund_replaces_version(conn, client, pauses):
     assert one(conn, revenue, day) == paid - Decimal(f"{v2['amount_rub']:.2f}")
 
 
-class Conflicting:
-    """Добавляет в первую страницу вторую строку заказа с тем же updated_at."""
+class Tampered:
+    """Подменяет строки первой страницы /orders функцией change."""
 
-    def __init__(self, client):
+    def __init__(self, client, change):
         self.client = client
+        self.change = change
 
     def get(self, path, params):
         r = self.client.get(path, params=params)
         if path != "/orders" or params["page"] != 1:
             return r
         body = r.json()
-        body["items"].append({**body["items"][0], "status": "cancelled"})
+        self.change(body["items"])
         return httpx.Response(200, json=body)
+
+
+class Broken:
+    def get(self, path, params):
+        raise RuntimeError("клиент сломался")
+
+
+def checks_of(conn):
+    return dict(conn.execute("select check_code, status from meta.check_results "
+                             "where load_id = (select max(load_id) from meta.load_runs)").fetchall())
 
 
 def test_version_conflict_blocks(conn, client, pauses):
     assert load(conn, client, pauses) == 0
     before = snapshot(conn)
     set_state(client, DAY)
-    assert run(DAY, conn, Conflicting(client), sleep=pauses.append) == 1
+    conflict = Tampered(client, lambda items: items.append({**items[0], "status": "cancelled"}))
+    assert run(DAY, conn, conflict, sleep=pauses.append) == 1
     assert last_status(conn) == "blocked"
+    assert checks_of(conn)["B03"] == "failed"
     assert snapshot(conn) == before
     assert one(conn, "select count(*) from staging.orders_candidate") > 0
+
+
+def test_blocked_keeps_state(conn, client, pauses):
+    assert load(conn, client, pauses) == 0
+    before = snapshot(conn)
+    set_state(client, DAY)
+    negative = Tampered(client, lambda items: items[0].update(amount_rub=-items[0]["amount_rub"]))
+    assert run(DAY, conn, negative, sleep=pauses.append) == 1
+    assert last_status(conn) == "blocked"
+    assert snapshot(conn) == before
+    res = checks_of(conn)
+    assert len(res) == 18
+    assert res["B05"] == "failed" and res["B12"] == "skipped"
+    assert one(conn, "select count(*) from staging.orders_candidate") > 0
+
+
+def test_warnings_publish(conn, client, pauses):
+    set_state(client, DAY)
+    dup = Tampered(client, lambda items: items.append(dict(items[0])))
+    assert run(DAY, conn, dup, sleep=pauses.append) == 0
+    assert last_status(conn) == "published"
+    res = checks_of(conn)
+    assert [c for c, s in res.items() if s != "passed"] == ["W01"]
+    assert one(conn, "select sum(orders_created) from mart.daily_revenue") == one(
+        conn, "select count(*) from staging.orders") > 0
+
+
+def test_unexpected_error(conn, pauses):
+    assert run(DAY, conn, Broken(), sleep=pauses.append) == 3
+    status, message = conn.execute("select status, message from meta.load_runs").fetchone()
+    assert status == "error"
+    assert "клиент сломался" in message
+
+
+def test_mart_mismatch_rolls_back(conn, client, pauses, monkeypatch):
+    assert load(conn, client, pauses) == 0
+    before = snapshot(conn)
+    bad = run_module.MART.replace("from staging.orders", "from staging.orders where city <> 'Москва'")
+    monkeypatch.setattr(run_module, "MART", bad)
+    assert load(conn, client, pauses) == 1
+    assert last_status(conn) == "blocked"
+    assert checks_of(conn)["B12"] == "failed"
+    assert snapshot(conn) == before
+
+
+def test_freshness(conn, capsys):
+    assert freshness(conn, date(2026, 10, 1)) == 1
+    conn.execute("""
+        insert into meta.load_runs (report_date, window_from, window_to, status, finished_at) values
+            ('2026-09-30', '2026-09-24', '2026-09-30', 'published', now()),
+            ('2026-10-01', '2026-09-25', '2026-10-01', 'blocked', now())""")
+    assert freshness(conn, date(2026, 10, 1)) == 0
+    assert "2026-09-30" in capsys.readouterr().out
+    assert freshness(conn, date(2026, 10, 3)) == 1

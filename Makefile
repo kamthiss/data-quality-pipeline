@@ -1,7 +1,7 @@
 PY = .venv/bin/python
 ORDERS = data/source/orders.parquet
 
-.PHONY: data api test db-up reset-db demo
+.PHONY: data api test db-up reset-db demo freshness
 
 data:
 	$(PY) -m dqpipe.source.generator
@@ -27,3 +27,7 @@ demo: $(ORDERS) reset-db
 	trap 'kill $$pid' EXIT; \
 	for i in $$(seq 50); do curl -sf localhost:8040/health >/dev/null && break; sleep 0.2; done; \
 	$(PY) -m dqpipe.simulate --from 2026-08-01 --to 2026-09-30
+
+# make freshness TODAY=2026-10-01
+freshness:
+	$(PY) -m dqpipe.freshness $(if $(TODAY),--today $(TODAY))
