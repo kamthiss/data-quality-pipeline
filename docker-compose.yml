@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: dq-postgres
+    environment:
+      POSTGRES_DB: dq
+      POSTGRES_USER: dq
+      POSTGRES_PASSWORD: dq
+    ports:
+      - "5435:5432"
+    volumes:
+      - dq-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dq -d dq"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+
+volumes:
+  dq-pgdata:
