@@ -23,8 +23,11 @@ create table if not exists staging.orders (
     status         text not null,
     amount_rub     numeric(12, 2) not null,
     items_count    integer not null,
-    payment_method text not null,
+    payment_method text,
     report_date    date not null
 );
+
+-- пустой способ оплаты не блокирует публикацию (W03), снимаем not null и на уже созданной базе
+alter table staging.orders alter column payment_method drop not null;
 
 create index if not exists orders_report_date on staging.orders (report_date);

@@ -180,6 +180,16 @@ def test_warnings_publish(conn, client, pauses):
         conn, "select count(*) from staging.orders") > 0
 
 
+def test_null_payment_publishes_with_warning(conn, client, pauses):
+    set_state(client, DAY)
+    no_payment = Tampered(client, lambda items: items[0].update(payment_method=None))
+    assert run(DAY, conn, no_payment, sleep=pauses.append) == 0
+    assert last_status(conn) == "published"
+    assert [c for c, s in checks_of(conn).items() if s != "passed"] == ["W03"]
+    # окно 08-01…08-03, первая страница каждого дня
+    assert one(conn, "select count(*) from staging.orders where payment_method is null") == 3
+
+
 def test_unexpected_error(conn, pauses):
     assert run(DAY, conn, Broken(), sleep=pauses.append) == 3
     status, message = conn.execute("select status, message from meta.load_runs").fetchone()
@@ -207,3 +217,18 @@ def test_freshness(conn, capsys):
     assert freshness(conn, date(2026, 10, 1)) == 0
     assert "2026-09-30" in capsys.readouterr().out
     assert freshness(conn, date(2026, 10, 3)) == 1
+
+
+def test_freshness_stuck_running(conn, capsys):
+    now = datetime(2026, 10, 1, 12, tzinfo=ZoneInfo(TZ))
+    conn.execute("""
+        insert into meta.load_runs (report_date, window_from, window_to, status, started_at, finished_at) values
+            ('2026-09-30', '2026-09-24', '2026-09-30', 'published', %(now)s - interval '6 hours', %(now)s),
+            ('2026-09-30', '2026-09-24', '2026-09-30', 'running', %(now)s - interval '61 minutes', null),
+            ('2026-09-30', '2026-09-24', '2026-09-30', 'running', %(now)s - interval '59 minutes', null)""",
+                 {"now": now})
+    assert freshness(conn, date(2026, 10, 1), now) == 1
+    out = capsys.readouterr().out
+    assert "load 2 " in out and "2026-10-01 10:59:00+03:00" in out
+    assert "load 3 " not in out
+    assert freshness(conn, date(2026, 10, 1), now - timedelta(minutes=2)) == 0

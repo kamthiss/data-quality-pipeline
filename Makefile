@@ -28,6 +28,6 @@ demo: $(ORDERS) reset-db
 	for i in $$(seq 50); do curl -sf localhost:8040/health >/dev/null && break; sleep 0.2; done; \
 	$(PY) -m dqpipe.simulate --from 2026-08-01 --to 2026-09-30
 
-# make freshness TODAY=2026-10-01
+# make freshness TODAY=2026-10-01 NOW=2026-10-01T12:00
 freshness:
-	$(PY) -m dqpipe.freshness $(if $(TODAY),--today $(TODAY))
+	$(PY) -m dqpipe.freshness $(if $(TODAY),--today $(TODAY)) $(if $(NOW),--now $(NOW))

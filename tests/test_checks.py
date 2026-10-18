@@ -128,6 +128,13 @@ def test_b04_status(conn):
     assert r.status == "failed" and r.sample == [{"order_id": "O081001", "status": "unknown"}]
 
 
+def test_b04_null_status(conn):
+    params = seed(conn)
+    candidate(conn, "status = null where order_id = 'O081001'")
+    r = check(conn, params, "B04")
+    assert r.status == "failed" and r.sample == [{"order_id": "O081001", "status": None}]
+
+
 def test_b05_amount_range(conn):
     params = seed(conn)
     candidate(conn, "amount_rub = '-5' where order_id = 'O081001'")
@@ -137,12 +144,26 @@ def test_b05_amount_range(conn):
     assert r.status == "failed" and r.violations == 2
 
 
+def test_b05_null_amount(conn):
+    params = seed(conn)
+    candidate(conn, "amount_rub = null where order_id = 'O081001'")
+    r = check(conn, params, "B05")
+    assert r.status == "failed" and r.sample == [{"order_id": "O081001", "amount_rub": None}]
+
+
 def test_b06_items_count(conn):
     params = seed(conn)
     candidate(conn, "items_count = '0' where order_id = 'O081001'")
     candidate(conn, "items_count = '51' where order_id = 'O081002'")
     r = check(conn, params, "B06")
     assert r.status == "failed" and r.violations == 2
+
+
+def test_b06_null_items_count(conn):
+    params = seed(conn)
+    candidate(conn, "items_count = null where order_id = 'O081001'")
+    r = check(conn, params, "B06")
+    assert r.status == "failed" and r.sample == [{"order_id": "O081001", "items_count": None}]
 
 
 def test_b07_updated_before_created(conn):
@@ -207,6 +228,13 @@ def test_w03_new_city_and_payment(conn):
     r = check(conn, params, "W03")
     assert r.status == "failed"
     assert {(x["field"], x["value"]) for x in r.sample} == {("payment_method", "crypto"), ("city", "Тверь")}
+
+
+def test_w03_null_payment(conn):
+    params = seed(conn)
+    candidate(conn, "payment_method = null where order_id = 'O081001'")
+    r = check(conn, params, "W03")
+    assert r.status == "failed" and r.sample == [{"field": "payment_method", "value": None, "rows": 1}]
 
 
 def test_w04_late_orders_for_published_day(conn):

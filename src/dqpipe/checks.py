@@ -160,7 +160,7 @@ CHECKS = [
     Check("W03", "warn", "появился новый город или способ оплаты", """
         select 'payment_method' as field, payment_method as value, count(*) as rows
         from staging.orders_candidate
-        where payment_method not in ('card', 'sbp', 'cash_on_delivery')
+        where payment_method is null or payment_method not in ('card', 'sbp', 'cash_on_delivery')
         group by payment_method
         union all
         select 'city', city, count(*)
