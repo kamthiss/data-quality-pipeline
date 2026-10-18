@@ -1,7 +1,7 @@
 PY = .venv/bin/python
 ORDERS = data/source/orders.parquet
 
-.PHONY: data api test db-up reset-db demo freshness
+.PHONY: data api test test-all db-up reset-db demo freshness scenario scenarios
 
 data:
 	$(PY) -m dqpipe.source.generator
@@ -13,6 +13,9 @@ api: $(ORDERS)
 	$(PY) -m uvicorn dqpipe.source.api:app --port 8040
 
 test: $(ORDERS) db-up
+	$(PY) -m pytest -m "not scenario"
+
+test-all: $(ORDERS) db-up
 	$(PY) -m pytest
 
 db-up:
@@ -31,3 +34,10 @@ demo: $(ORDERS) reset-db
 # make freshness TODAY=2026-10-01 NOW=2026-10-01T12:00
 freshness:
 	$(PY) -m dqpipe.freshness $(if $(TODAY),--today $(TODAY)) $(if $(NOW),--now $(NOW))
+
+# make scenario S=partial_page; без S — все сценарии
+scenario: $(ORDERS) db-up
+	$(PY) -m dqpipe.scenario $(S)
+
+scenarios: $(ORDERS) db-up
+	$(PY) -m dqpipe.scenario

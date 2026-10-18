@@ -202,6 +202,23 @@ def test_late_data(client):
     assert summary(client, late)["orders"] == n
 
 
+def test_volume_drop(client):
+    set_state(client)
+    clean = {x["order_id"]: x for x in rows(fetch(client, DAY)[1])}
+    set_state(client, "volume_drop")
+    pages, items = fetch(client, DAY)
+    flat = rows(items)
+    assert pages == 2
+    assert [len(p) for p in items] == [500, 393]
+    assert len({x["order_id"] for x in flat}) == 893 == 1488 - 595
+    assert all(x == clean[x["order_id"]] for x in flat)
+    s = summary(client, DAY)
+    assert s["orders"] == 893
+    assert s["amount_rub_total"] == pytest.approx(sum(x["amount_rub"] for x in flat), abs=0.01)
+    assert [x["order_id"] for x in rows(fetch(client, DAY)[1])] == [x["order_id"] for x in flat]
+    assert summary(client, OTHER)["orders"] == daily_counts()[pd.Timestamp(OTHER).date()]
+
+
 def test_admin_state_validation(client):
     r = client.post("/admin/state", json={"now": NOW, "fault": "duplicates", "fault_date": None})
     assert r.status_code == 422

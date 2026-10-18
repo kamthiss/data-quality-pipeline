@@ -14,7 +14,7 @@ PAGE = 500
 FIELDS = ["order_id", "created_at", "updated_at", "customer_id", "city", "status",
           "amount_rub", "items_count", "payment_method"]
 Fault = Literal["clean", "duplicates", "api_500", "api_down", "partial_page",
-                "missing_day", "schema_drift", "bad_values", "late_data"]
+                "missing_day", "schema_drift", "bad_values", "late_data", "volume_drop"]
 
 orders = pd.DataFrame()
 state = {
@@ -93,6 +93,9 @@ def served(day, fault):
         return df.iloc[0:0]
     if fault == "bad_values":
         return with_bad_values(df)
+    if fault == "volume_drop":
+        lost = np.random.default_rng(7).choice(df["order_id"], math.floor(len(df) * 0.4), replace=False)
+        return df[~df["order_id"].isin(lost)]
     return df
 
 

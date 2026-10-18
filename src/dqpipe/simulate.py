@@ -1,6 +1,7 @@
 import argparse
 import sys
 from datetime import date, datetime, time, timedelta
+from time import sleep as pause
 from zoneinfo import ZoneInfo
 
 import httpx
@@ -8,6 +9,19 @@ import httpx
 from dqpipe.config import API_URL, TIMEOUT, TZ
 from dqpipe.db import apply_sql, connect
 from dqpipe.run import run
+
+
+def simulate(conn, client, first, last, fault="clean", fault_date=None, sleep=pause):
+    """Запуски за дни first…last, каждый в 03:00 по Москве следующего дня; вернуть коды выхода."""
+    codes = []
+    d = first
+    while d <= last:
+        now = datetime.combine(d + timedelta(days=1), time(3), ZoneInfo(TZ))
+        client.post("/admin/state", json={"now": now.isoformat(), "fault": fault,
+                                          "fault_date": fault_date and fault_date.isoformat()}).raise_for_status()
+        codes.append(run(d, conn, client, sleep))
+        d += timedelta(days=1)
+    return codes
 
 
 def main():
@@ -18,18 +32,10 @@ def main():
     p.add_argument("--fault-date", type=date.fromisoformat)
     a = p.parse_args()
 
-    code = 0
     with connect() as conn, httpx.Client(base_url=API_URL, timeout=TIMEOUT) as client:
         apply_sql(conn)
-        d = a.first
-        while d <= a.last:
-            now = datetime.combine(d + timedelta(days=1), time(3), ZoneInfo(TZ))
-            fault_date = a.fault_date.isoformat() if a.fault_date else None
-            client.post("/admin/state", json={"now": now.isoformat(), "fault": a.fault,
-                                              "fault_date": fault_date}).raise_for_status()
-            code = max(code, run(d, conn, client))
-            d += timedelta(days=1)
-    sys.exit(code)
+        codes = simulate(conn, client, a.first, a.last, a.fault, a.fault_date)
+    sys.exit(max(codes, default=0))
 
 
 if __name__ == "__main__":
